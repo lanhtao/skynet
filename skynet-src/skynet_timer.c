@@ -279,8 +279,8 @@ skynet_gettime(void) {
 
 void 
 skynet_timer_init(void) {
-	TI = timer_create_timer();
-	TI->current = _gettime();
+	TI = timer_create_timer();//创建全局的定时器，并清空定时器链表
+	TI->current = _gettime();//获取当前时间，单位为厘秒
 
 #if !defined(__APPLE__)
 	struct timespec ti;
@@ -289,9 +289,9 @@ skynet_timer_init(void) {
 #else
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
-	uint32_t sec = (uint32_t)tv.tv_sec;
+	uint32_t sec = (uint32_t)tv.tv_sec;//获取当前时间，未计算单位为微秒的数，单位为秒
 #endif
-	uint32_t mono = _gettime() / 100;
+	uint32_t mono = _gettime() / 100;//获取当前时间，未计算单位小于秒的数，单位为秒
 
-	TI->starttime = sec - mono;
+	TI->starttime = sec - mono;//相对时间。
 }
