@@ -18,8 +18,8 @@
 #include <string.h>
 
 struct monitor {
-	int count;
-	struct skynet_monitor ** m;
+	int count;//工作线程，共8个
+	struct skynet_monitor ** m;//工作线程对应的监视器，共8个
 	pthread_cond_t cond;
 	pthread_mutex_t mutex;
 	int sleep;
@@ -59,7 +59,7 @@ _socket(void *p) {
 			CHECK_ABORT
 			continue;
 		}
-		wakeup(m,0);
+		wakeup(m,0);//所有工作线程都休眠了，才唤醒
 	}
 	return NULL;
 }
@@ -85,7 +85,7 @@ _monitor(void *p) {
 	for (;;) {
 		CHECK_ABORT
 		for (i=0;i<n;i++) {
-			skynet_monitor_check(m->m[i]);
+			skynet_monitor_check(m->m[i]);//监视线程，检测标志
 		}
 		for (i=0;i<5;i++) {
 			CHECK_ABORT
@@ -100,9 +100,9 @@ static void *
 _timer(void *p) {
 	struct monitor * m = p;
 	for (;;) {
-		skynet_updatetime();
+		skynet_updatetime();//每过0.01s更新下定时器时间，如果有定时任务触发即处理定时任务
 		CHECK_ABORT
-		wakeup(m,m->count-1);
+		wakeup(m,m->count-1);//有1个休眠线程，即唤醒1个。保持工作线程处于工作状态
 		usleep(2500);
 	}
 	// wakeup socket thread
@@ -117,16 +117,17 @@ _worker(void *p) {
 	struct worker_parm *wp = p;
 	int id = wp->id;
 	struct monitor *m = wp->m;
-	struct skynet_monitor *sm = m->m[id];
+	struct skynet_monitor *sm = m->m[id];//每个线程对应着一个监视器
 	for (;;) {
 		if (skynet_context_message_dispatch(sm)) {
+			//没有消息处理
 			CHECK_ABORT
 			if (pthread_mutex_lock(&m->mutex) == 0) {
-				++ m->sleep;
+				++ m->sleep;//休眠
 				// "spurious wakeup" is harmless,
 				// because skynet_context_message_dispatch() can be call at any time.
-				pthread_cond_wait(&m->cond, &m->mutex);
-				-- m->sleep;
+				pthread_cond_wait(&m->cond, &m->mutex);//阻塞在这
+				-- m->sleep;//被唤醒
 				if (pthread_mutex_unlock(&m->mutex)) {
 					fprintf(stderr, "unlock mutex error");
 					exit(1);
@@ -138,17 +139,17 @@ _worker(void *p) {
 }
 
 static void
-_start(int thread) {
-	pthread_t pid[thread+3];
+_start(int thread) {//8
+	pthread_t pid[thread+3];//11
 
 	struct monitor *m = malloc(sizeof(*m));
 	memset(m, 0, sizeof(*m));
-	m->count = thread;
+	m->count = thread;//工作线程8个
 	m->sleep = 0;
 
 	m->m = malloc(thread * sizeof(struct skynet_monitor *));
 	int i;
-	for (i=0;i<thread;i++) {
+	for (i=0;i<thread;i++) {//新建8个监视器
 		m->m[i] = skynet_monitor_new();
 	}
 	if (pthread_mutex_init(&m->mutex, NULL)) {
