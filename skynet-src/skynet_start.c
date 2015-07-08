@@ -59,7 +59,7 @@ _socket(void *p) {
 			CHECK_ABORT
 			continue;
 		}
-		wakeup(m,0);//所有工作线程都休眠了，才唤醒
+		wakeup(m,0);//所有工作线程都休眠了，才唤醒。只要有一个线程处于非休眠状态，就不会唤醒新的工作线程。
 	}
 	return NULL;
 }
@@ -102,7 +102,7 @@ _timer(void *p) {
 	for (;;) {
 		skynet_updatetime();//每过0.01s更新下定时器时间，如果有定时任务触发即处理定时任务
 		CHECK_ABORT
-		wakeup(m,m->count-1);//有1个休眠线程，即唤醒1个。保持工作线程处于工作状态
+		wakeup(m,m->count-1);//有1个休眠线程，即唤醒1个。保证一定有一个工作线程处于空闲状态
 		usleep(2500);
 	}
 	// wakeup socket thread
