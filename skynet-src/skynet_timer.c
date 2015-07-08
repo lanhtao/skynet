@@ -42,8 +42,8 @@ struct timer {
 	struct link_list t[4][TIME_LEVEL-1];//4级梯队 4级不同的定时器
 	int lock;//原子操作锁
 	int time;//当前已经走过的时间
-	uint32_t current;//当前时间，绝对时间
-	uint32_t starttime;//相对系统开机的时间
+	uint32_t current;//相对系统启动时间的相对时间
+	uint32_t starttime;//系统开机的绝对时间
 };
 
 //申明一个全局的定时器
@@ -93,7 +93,7 @@ add_node(struct timer *T,struct timer_node *node)
 		link(&T->near[time&TIME_NEAR_MASK],node);
 	}
 	else {
-		//随着下标变大，超时时间增大一个数量级
+		//随着下标变大，超时时间增大一个数量级。以64的倍数来区分
 		int i;
 		int mask=TIME_NEAR << TIME_LEVEL_SHIFT;
 		for (i=0;i<3;i++) {
@@ -127,9 +127,11 @@ timer_shift(struct timer *T) {
 	int time = (++T->time) >> TIME_NEAR_SHIFT;//定时时间加1
 	int i=0;
 	
-	while ((T->time & (mask-1))==0) {//当前过去的时间小于256
-		int idx=time & TIME_LEVEL_MASK;//==0：time大于63；!=0:小于63
+	while ((T->time & (mask-1))==0) {//当前过去的时间等于256，或为256的倍数
+		//每过256秒，代码到这执行一次
+		int idx=time & TIME_LEVEL_MASK;//==0：time等于64，或为64的倍数
 		if (idx!=0) {
+			//t[0][1]中存储的计时器为256-256*2 的定时值，将链表中的计时器移位
 			--idx;
 			struct timer_node *current = link_clear(&T->t[i][idx]);//获取链表中的某个定时器的头指针，并情况链表
 			while (current) {//将该链表重新添加到定时器中。其等级将偏移
@@ -181,7 +183,7 @@ timer_update(struct timer *T)
 	timer_execute(T);
 
 	// shift time first, and then dispatch timer message
-	timer_shift(T);
+	timer_shift(T);//计时器走过的时间 +1
 	timer_execute(T);
 
 	__sync_lock_release(&T->lock);
@@ -234,7 +236,7 @@ skynet_timeout(uint32_t handle, int time, int session) {
 }
 
 /*
-**获得当前时间点的时间，单位为0.01s
+**获得系统启动到现在的相对时间，单位为0.01s
 **返回值为多少个厘秒
 */
 static uint32_t
@@ -242,7 +244,13 @@ _gettime(void) {
 	uint32_t t;
 #if !defined(__APPLE__)
 	struct timespec ti;
-	clock_gettime(CLOCK_MONOTONIC, &ti);
+	/*
+	CLOCK_REALTIME:系统实时时间,随系统实时时间改变而改变,即从UTC1970-1-1 0:0:0开始计时,
+中间时刻如果系统时间被用户改成其他,则对应的时间相应改变
+　　CLOCK_MONOTONIC:从系统启动这一刻起开始计时,不受系统时间被用户改变的影响
+　　CLOCK_PROCESS_CPUTIME_ID:本进程到当前代码系统CPU花费的时间
+　　CLOCK_THREAD_CPUTIME_ID:本线程到当前代码系统CPU花费的时间*/
+	clock_gettime(CLOCK_MONOTONIC, &ti);//从系统启动一刻开始计时.相对时间
 	t = (uint32_t)(ti.tv_sec & 0xffffff) * 100;
 	t += ti.tv_nsec / 10000000;
 #else
@@ -256,12 +264,14 @@ _gettime(void) {
 
 void
 skynet_updatetime(void) {
-	uint32_t ct = _gettime();
-	if (ct != TI->current) {
+	uint32_t ct = _gettime();//相对系统启动时间
+	if (ct != TI->current) {//上一次记录的相对时间与这次获取的不同。说明时间过了1个厘秒
+		//diff一般为1，极少数情况不等于1
 		int diff = ct>=TI->current?ct-TI->current:(0xffffff+1)*100-TI->current+ct;
 		TI->current = ct;
 		int i;
 		for (i=0;i<diff;i++) {
+			//更新计时器
 			timer_update(TI);
 		}
 	}
@@ -280,18 +290,18 @@ skynet_gettime(void) {
 void 
 skynet_timer_init(void) {
 	TI = timer_create_timer();//创建全局的定时器，并清空定时器链表
-	TI->current = _gettime();//获取当前时间，单位为厘秒
+	TI->current = _gettime();//相对系统启动时间的相对时间
 
 #if !defined(__APPLE__)
 	struct timespec ti;
-	clock_gettime(CLOCK_REALTIME, &ti);
-	uint32_t sec = (uint32_t)ti.tv_sec;
+	clock_gettime(CLOCK_REALTIME, &ti);//获取1970-1-1 0:0:0开始计时的时间，绝对时间，纳秒精度
+	uint32_t sec = (uint32_t)ti.tv_sec;//取其中的秒
 #else
 	struct timeval tv;
-	gettimeofday(&tv, NULL);
-	uint32_t sec = (uint32_t)tv.tv_sec;//获取当前时间，未计算单位为微秒的数，单位为秒
+	gettimeofday(&tv, NULL);//获取当前时间，微秒精度
+	uint32_t sec = (uint32_t)tv.tv_sec;//取其中的秒
 #endif
-	uint32_t mono = _gettime() / 100;//获取当前时间，未计算单位小于秒的数，单位为秒
+	uint32_t mono = _gettime() / 100;//获取当前相对系统启动的相对时间。精度为厘秒
 
-	TI->starttime = sec - mono;//相对时间。
+	TI->starttime = sec - mono;//系统启动的绝对时间
 }
